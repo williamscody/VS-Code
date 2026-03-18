@@ -37,6 +37,7 @@ SDC -> extra_cluster -> MacLoggerDX -> Mac SmartSDR Panadapter
 - **CALLSIGN**: Your callsign for cluster login (e.g., `K3CDY`)
 - **SPOT_TIMEOUT**: How long (in seconds) a spot remains valid (default: `600`)
 - **FREQ_MATCH_HZ**: Frequency tolerance (in Hz) for matching a spot (default: `1000`)
+- **FREQ_CHANGE_HZ**:  How much VFO frquency change is required before attempting a match (default: `500`)
 
 ## Build Instructions
 1. Ensure you have Python 3.9+ and `py2app` installed:
