@@ -298,8 +298,6 @@ def flex_listener():
     # subscribe to slice updates
     sock.sendall(b"C1|sub slice all\n")
 
-    last_checked_freq = 0
-    
     while True:
 
         data = sock.recv(4096).decode(errors="ignore")
@@ -317,28 +315,33 @@ def flex_listener():
             
             freq = float(m.group(2)) * 1e6
             global current_freq
-            current_freq = freq   
-                 
+            previous_freq = current_freq
+
             print("Current frequency:", freq)
-            
-            # Only check for spots if frequency change exceeds threshold
-            freq_change = abs(freq - last_checked_freq)
-            
-            if freq_change >= FREQ_CHANGE_HZ:
-                print(f"Frequency change: {freq_change} Hz (threshold: {FREQ_CHANGE_HZ} Hz)")
-                
-                call = find_spot(freq)
-                
-                if call:
-                    print("Matched spot:", call)
-                
-                    set_mldx_call(call)
-                
-                    auto_mode(sock, slice_id, freq)
-                
-                last_checked_freq = freq
+
+            # Compare each update to the immediately previous frequency.
+            if previous_freq is None:
+                freq_change = 0
+                print("Initial frequency captured; waiting for next change to evaluate threshold")
             else:
-                print(f"Frequency change: {freq_change} Hz - below threshold ({FREQ_CHANGE_HZ} Hz), skipping spot check")
+                freq_change = abs(freq - previous_freq)
+
+                if freq_change >= FREQ_CHANGE_HZ:
+                    print(f"Frequency change: {freq_change} Hz (threshold: {FREQ_CHANGE_HZ} Hz)")
+
+                    call = find_spot(freq)
+
+                    if call:
+                        print("Matched spot:", call)
+
+                        set_mldx_call(call)
+
+                        auto_mode(sock, slice_id, freq)
+                else:
+                    print(f"Frequency change: {freq_change} Hz - below threshold ({FREQ_CHANGE_HZ} Hz), skipping spot check")
+
+            # Always update baseline frequency for the next incoming change.
+            current_freq = freq
             
 # ------------------------------------------------
 # MAIN
