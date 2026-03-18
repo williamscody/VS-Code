@@ -59,6 +59,9 @@ FREQ_MATCH_HZ = 1000
 # Minimum frequency change to trigger spot detection (Hz)
 FREQ_CHANGE_HZ = 500
 
+# If True, do not change slice mode when a spot is matched.
+KEEP_CURRENT_MODE = False
+
 # Storage for cluster spots
 spots = []
 
@@ -69,7 +72,7 @@ spots = []
 SETTINGS_FILE = os.path.expanduser("~/Library/Preferences/FlexSpotBridge.json")
 
 def load_settings():
-    global FLEX_IP, FLEX_PORT, CLUSTER_HOST, CLUSTER_PORT, CALLSIGN, SPOT_TIMEOUT, FREQ_MATCH_HZ, FREQ_CHANGE_HZ
+    global FLEX_IP, FLEX_PORT, CLUSTER_HOST, CLUSTER_PORT, CALLSIGN, SPOT_TIMEOUT, FREQ_MATCH_HZ, FREQ_CHANGE_HZ, KEEP_CURRENT_MODE
     if os.path.exists(SETTINGS_FILE):
         try:
             with open(SETTINGS_FILE, "r") as f:
@@ -82,6 +85,7 @@ def load_settings():
             SPOT_TIMEOUT = int(data.get("SPOT_TIMEOUT", SPOT_TIMEOUT))
             FREQ_MATCH_HZ = int(data.get("FREQ_MATCH_HZ", FREQ_MATCH_HZ))
             FREQ_CHANGE_HZ = int(data.get("FREQ_CHANGE_HZ", FREQ_CHANGE_HZ))
+            KEEP_CURRENT_MODE = bool(data.get("KEEP_CURRENT_MODE", KEEP_CURRENT_MODE))
         except Exception as e:
             print(f"Failed to load settings: {e}")
 
@@ -96,6 +100,7 @@ def save_settings():
             "SPOT_TIMEOUT": SPOT_TIMEOUT,
             "FREQ_MATCH_HZ": FREQ_MATCH_HZ,
             "FREQ_CHANGE_HZ": FREQ_CHANGE_HZ,
+            "KEEP_CURRENT_MODE": KEEP_CURRENT_MODE,
         }
         with open(SETTINGS_FILE, "w") as f:
             json.dump(data, f, indent=2)
@@ -336,7 +341,10 @@ def flex_listener():
 
                         set_mldx_call(call)
 
-                        auto_mode(sock, slice_id, freq)
+                        if KEEP_CURRENT_MODE:
+                            print("Keep current mode is enabled; not changing mode")
+                        else:
+                            auto_mode(sock, slice_id, freq)
                 else:
                     print(f"Frequency change: {freq_change} Hz - below threshold ({FREQ_CHANGE_HZ} Hz), skipping spot check")
 
@@ -428,7 +436,7 @@ class App:
     def open_settings(self):
         settings_win = tk.Toplevel(self.root)
         settings_win.title("Preferences")
-        settings_win.geometry("400x300")
+        settings_win.geometry("400x340")
 
         # Settings fields
         settings = [
@@ -452,13 +460,23 @@ class App:
             entries[var_name] = entry
             row += 1
 
+        keep_current_mode_var = tk.BooleanVar(value=KEEP_CURRENT_MODE)
+        tk.Checkbutton(
+            settings_win,
+            text="Keep current mode",
+            variable=keep_current_mode_var
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(6, 8))
+        row += 1
+
         def save():
+            global KEEP_CURRENT_MODE
             for var_name, entry in entries.items():
                 value = entry.get()
                 if var_name in ["FLEX_PORT", "CLUSTER_PORT", "SPOT_TIMEOUT", "FREQ_MATCH_HZ", "FREQ_CHANGE_HZ"]:
                     globals()[var_name] = int(value)
                 else:
                     globals()[var_name] = value
+            KEEP_CURRENT_MODE = keep_current_mode_var.get()
             save_settings()
             settings_win.destroy()
             print("Settings saved")

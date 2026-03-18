@@ -15,6 +15,7 @@ SDC -> extra_cluster -> MacLoggerDX -> Mac SmartSDR Panadapter
 ## Features
 - Monitors FlexRadio and SDC cluster in real time
 - Automatically sends matched callsigns to MacLoggerDX
+- Optional automatic mode switching based on band-plan ranges
 - GUI window with live log output
 - User-adjustable settings (radio IP, ports, callsign, etc.)
 - Menu bar integration with Preferences and Clear All Spots (⌘L)
@@ -38,6 +39,13 @@ SDC -> extra_cluster -> MacLoggerDX -> Mac SmartSDR Panadapter
 - **SPOT_TIMEOUT**: How long (in seconds) a spot remains valid (default: `600`)
 - **FREQ_MATCH_HZ**: Frequency tolerance (in Hz) for matching a spot (default: `1000`)
 - **FREQ_CHANGE_HZ**:  How much VFO frquency change is required before attempting a match (default: `500`)
+- **Keep current mode** (checkbox): When enabled, FlexSpotBridge will not change the slice mode when a spot is matched. When disabled, FlexSpotBridge can change mode automatically according to its band-plan logic.
+
+## Recommended Defaults for CW Operators
+- Enable **Keep current mode** in Preferences so FlexSpotBridge does not switch out of CW on a matched spot.
+- Keep **FREQ_MATCH_HZ** at `1000` as a good starting point; increase slightly if your click-to-spot tuning often lands just outside matches.
+- Keep **FREQ_CHANGE_HZ** at `500` to avoid unnecessary lookups from very small tuning movements.
+- Keep **SPOT_TIMEOUT** at `600` seconds unless you want only very recent spots to match.
 
 ## Build Instructions
 1. Ensure you have Python 3.9+ and `py2app` installed:
@@ -63,6 +71,7 @@ SDC -> extra_cluster -> MacLoggerDX -> Mac SmartSDR Panadapter
 - Launch SDC and configure your Telnet Server.  The port should be set to "7373" and under "Additional", "Connect and Start SKM Server" should be enabled.  Set up and Start your Spotters if desired.  (I rely on the SKM Server to identify CW spots for me so I only see signals decoded at my QTH.)
 - Launch FlexSpotBridge
 - Use the **Preferences...** menu (⌘,) to enter your settings.
+- In **Preferences...**, enable **Keep current mode** if you want to stay in your current mode (for example, to avoid switching out of CW).
 - Use **Clear All Spots** (⌘L) to clear all spots from the panadapter.  FlexSpotBridge will only recognize spots that appear AFTER the program is launched.
 - All log output appears in the main window.
 - Note that MacLoggerDX will be in focus when a spot populates the call field.
