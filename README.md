@@ -74,7 +74,7 @@ SDC -> extra_cluster -> MacLoggerDX -> Mac SmartSDR Panadapter
 - In **Preferences...**, enable **Keep current mode** if you want to stay in your current mode (for example, to avoid switching out of CW).
 - Use **Clear All Spots** (⌘L) to clear all spots from the panadapter.  FlexSpotBridge will only recognize spots that appear AFTER the program is launched.
 - All log output appears in the main window.
-- Note that MacLoggerDX will be in focus when a spot populates the call field.
+- Note that MacLoggerDX will be in focus momentarily when a spot populates the call field.  Focus will quickly resume to the prior app after spot is entered into MLDX.
 
 ## License
 MIT License
