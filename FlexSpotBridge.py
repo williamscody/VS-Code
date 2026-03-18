@@ -56,6 +56,9 @@ SPOT_TIMEOUT = 600
 # Frequency tolerance for match (Hz)
 FREQ_MATCH_HZ = 1000
 
+# Minimum frequency change to trigger spot detection (Hz)
+FREQ_CHANGE_HZ = 500
+
 # Storage for cluster spots
 spots = []
 
@@ -66,7 +69,7 @@ spots = []
 SETTINGS_FILE = os.path.expanduser("~/Library/Preferences/FlexSpotBridge.json")
 
 def load_settings():
-    global FLEX_IP, FLEX_PORT, CLUSTER_HOST, CLUSTER_PORT, CALLSIGN, SPOT_TIMEOUT, FREQ_MATCH_HZ
+    global FLEX_IP, FLEX_PORT, CLUSTER_HOST, CLUSTER_PORT, CALLSIGN, SPOT_TIMEOUT, FREQ_MATCH_HZ, FREQ_CHANGE_HZ
     if os.path.exists(SETTINGS_FILE):
         try:
             with open(SETTINGS_FILE, "r") as f:
@@ -78,6 +81,7 @@ def load_settings():
             CALLSIGN = data.get("CALLSIGN", CALLSIGN)
             SPOT_TIMEOUT = int(data.get("SPOT_TIMEOUT", SPOT_TIMEOUT))
             FREQ_MATCH_HZ = int(data.get("FREQ_MATCH_HZ", FREQ_MATCH_HZ))
+            FREQ_CHANGE_HZ = int(data.get("FREQ_CHANGE_HZ", FREQ_CHANGE_HZ))
         except Exception as e:
             print(f"Failed to load settings: {e}")
 
@@ -91,6 +95,7 @@ def save_settings():
             "CALLSIGN": CALLSIGN,
             "SPOT_TIMEOUT": SPOT_TIMEOUT,
             "FREQ_MATCH_HZ": FREQ_MATCH_HZ,
+            "FREQ_CHANGE_HZ": FREQ_CHANGE_HZ,
         }
         with open(SETTINGS_FILE, "w") as f:
             json.dump(data, f, indent=2)
@@ -118,9 +123,36 @@ class TextRedirector:
 def set_mldx_call(call):
 
     print(f"Sending to MLDX: {call}")
+    
+    # Get the currently focused app before opening MLDX
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", "tell application \"System Events\" to name of first application process whose frontmost is true"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        previous_app = result.stdout.strip()
+    except subprocess.CalledProcessError:
+        previous_app = None
+    
     try:
         subprocess.run(["open", f"mldx://lookup?call={call}"], check=True)
         print("MLDX lookup URL opened successfully")
+        
+        # Give MLDX a moment to come to focus
+        time.sleep(0.5)
+        
+        # Restore focus to the previously focused app
+        if previous_app:
+            try:
+                subprocess.run(
+                    ["osascript", "-e", f"tell application \"{previous_app}\" to activate"],
+                    check=True
+                )
+                print(f"Focus restored to {previous_app}")
+            except subprocess.CalledProcessError as e:
+                print(f"Failed to restore focus to {previous_app}: {e}")
     except subprocess.CalledProcessError as e:
         print(f"Failed to open MLDX lookup URL: {e}")
 
@@ -266,7 +298,7 @@ def flex_listener():
     # subscribe to slice updates
     sock.sendall(b"C1|sub slice all\n")
 
-    last_freq = 0
+    last_checked_freq = 0
     
     while True:
 
@@ -287,18 +319,26 @@ def flex_listener():
             global current_freq
             current_freq = freq   
                  
-            print("Current frequency:", freq)        
+            print("Current frequency:", freq)
             
-            call = find_spot(freq)
+            # Only check for spots if frequency change exceeds threshold
+            freq_change = abs(freq - last_checked_freq)
             
-            if call:
-                print("Matched spot:", call)
-            
-                set_mldx_call(call)
-            
-                auto_mode(sock, slice_id, freq)
-            
-            last_freq = freq
+            if freq_change >= FREQ_CHANGE_HZ:
+                print(f"Frequency change: {freq_change} Hz (threshold: {FREQ_CHANGE_HZ} Hz)")
+                
+                call = find_spot(freq)
+                
+                if call:
+                    print("Matched spot:", call)
+                
+                    set_mldx_call(call)
+                
+                    auto_mode(sock, slice_id, freq)
+                
+                last_checked_freq = freq
+            else:
+                print(f"Frequency change: {freq_change} Hz - below threshold ({FREQ_CHANGE_HZ} Hz), skipping spot check")
             
 # ------------------------------------------------
 # MAIN
@@ -396,6 +436,7 @@ class App:
             ("CALLSIGN", "CALLSIGN"),
             ("SPOT_TIMEOUT", "SPOT_TIMEOUT"),
             ("FREQ_MATCH_HZ", "FREQ_MATCH_HZ"),
+            ("FREQ_CHANGE_HZ", "FREQ_CHANGE_HZ"),
         ]
 
         entries = {}
@@ -411,7 +452,7 @@ class App:
         def save():
             for var_name, entry in entries.items():
                 value = entry.get()
-                if var_name in ["FLEX_PORT", "CLUSTER_PORT", "SPOT_TIMEOUT", "FREQ_MATCH_HZ"]:
+                if var_name in ["FLEX_PORT", "CLUSTER_PORT", "SPOT_TIMEOUT", "FREQ_MATCH_HZ", "FREQ_CHANGE_HZ"]:
                     globals()[var_name] = int(value)
                 else:
                     globals()[var_name] = value
