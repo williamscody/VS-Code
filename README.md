@@ -1,5 +1,7 @@
 # FlexSpotBridge
 
+Current release: **1.0 beta (rev 1)**
+
 ## Overview
 The Windows version of SmartSDR has a feature missing from Mac SmartSDR.  When clicking on a panadapter spot in the Windows version, that spot information is sent out from the app for use by other applications.  That function is not present in Mac SmartSDR.
 
@@ -40,6 +42,7 @@ SDC -> extra_cluster -> MacLoggerDX -> Mac SmartSDR Panadapter
 - **FREQ_MATCH_HZ**: Frequency tolerance (in Hz) for matching a spot (default: `100`)
 - **FREQ_CHANGE_HZ**:  How much VFO frquency change is required before attempting a match (default: `200`)
 - **Keep current mode** (checkbox): When enabled, FlexSpotBridge will not change the slice mode when a spot is matched. When disabled, FlexSpotBridge can change mode automatically according to its band-plan logic.
+- **Verbose debug logging** (checkbox): When enabled, FlexSpotBridge prints detailed Flex/cluster processing logs. Leave this disabled for cleaner output and lower UI logging overhead.
 
 ## Recommended Defaults for CW Operators
 - Enable **Keep current mode** in Preferences so FlexSpotBridge does not switch out of CW on a matched spot.
