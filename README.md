@@ -1,7 +1,7 @@
 # FlexSpotBridge
 
 ## Overview
-The Windows version of SmartSDR has one important feature missing from Mac SmartSDR.  When clicking on a panadapter spot in the Windows version, that spot information is sent from the app for use by other applications.  That function is not present in Mac SmartSDR.
+The Windows version of SmartSDR has a feature missing from Mac SmartSDR.  When clicking on a panadapter spot in the Windows version, that spot information is sent out from the app for use by other applications.  That function is not present in Mac SmartSDR.
 
 With this app, you can click on any spot that appears in your panadapter (as sent by Software Defined Connectors' (SDC) SKM Server or Telnet Server), which tunes your radio to that spot.  FlexSpotBridge keeps track of spots sent by the SDC server, reads the new frequency from the Flex, and determines if there is a spot at (or near) that frequency.  If so, the spot information is forwarded to MacLoggerDX and fills in the Call field.  This obviates the need to manually enter the callsign in MacLoggerDX and gives you immediate information about the spot.
 
@@ -20,14 +20,14 @@ SDC -> extra_cluster -> MacLoggerDX -> Mac SmartSDR Panadapter
 - User-adjustable settings (radio IP, ports, callsign, etc.)
 - Menu bar integration with Preferences and Clear All Spots (⌘L)
 
-## System Requirements
+## System Requirements (my setup)
 - macOS 12 or later (Apple Silicon or Intel)
 - Python 3.9+ (tested with Python 3.14)
 - FlexRadio 6000, 8000 or Aurora series (tested with Flex 8400)
-- Software Defined Connectors cluster running locally
+- Software Defined Connectors (SDC) cluster running locally
 - Mac SmartSDR app installed
 - MacLoggerDX installed
-- extra_cluster installed (located in the MacLoggerDX "Extras/Supporting Apps" folder)
+- extra_cluster installed (located in the MacLoggerDX "Extras/Supporting Apps" folder).  Note: extra_cluster is not required unless you choose to grab CW spots decoded by SDC.
 - py2app (for building the app)
 
 ## Settings Explained
