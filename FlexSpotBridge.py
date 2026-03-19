@@ -54,10 +54,10 @@ CALLSIGN = "K3CDY"
 SPOT_TIMEOUT = 600
 
 # Frequency tolerance for match (Hz)
-FREQ_MATCH_HZ = 1000
+FREQ_MATCH_HZ = 100
 
 # Minimum frequency change to trigger spot detection (Hz)
-FREQ_CHANGE_HZ = 500
+FREQ_CHANGE_HZ = 200
 
 # If True, do not change slice mode when a spot is matched.
 KEEP_CURRENT_MODE = False
@@ -408,7 +408,11 @@ class App:
                 sock.connect((FLEX_IP, FLEX_PORT))
                 sock.sendall(b"C1|spot clear\n")
                 sock.close()
-                print("All spots cleared on Flex panadapter.")
+                global current_freq
+                removed_spots = len(spots)
+                spots.clear()
+                current_freq = None
+                print(f"All spots cleared on Flex panadapter. Local spot memory reset ({removed_spots} spots removed).")
             except Exception as e:
                 print(f"Failed to clear spots on Flex: {e}")
 

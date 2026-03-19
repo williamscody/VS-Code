@@ -37,14 +37,14 @@ SDC -> extra_cluster -> MacLoggerDX -> Mac SmartSDR Panadapter
 - **CLUSTER_PORT**: Port for SDC cluster (default: `7373`)
 - **CALLSIGN**: Your callsign for cluster login (e.g., `K3CDY`)
 - **SPOT_TIMEOUT**: How long (in seconds) a spot remains valid (default: `600`)
-- **FREQ_MATCH_HZ**: Frequency tolerance (in Hz) for matching a spot (default: `1000`)
-- **FREQ_CHANGE_HZ**:  How much VFO frquency change is required before attempting a match (default: `500`)
+- **FREQ_MATCH_HZ**: Frequency tolerance (in Hz) for matching a spot (default: `100`)
+- **FREQ_CHANGE_HZ**:  How much VFO frquency change is required before attempting a match (default: `200`)
 - **Keep current mode** (checkbox): When enabled, FlexSpotBridge will not change the slice mode when a spot is matched. When disabled, FlexSpotBridge can change mode automatically according to its band-plan logic.
 
 ## Recommended Defaults for CW Operators
 - Enable **Keep current mode** in Preferences so FlexSpotBridge does not switch out of CW on a matched spot.
-- Keep **FREQ_MATCH_HZ** at `1000` as a good starting point; increase slightly if your click-to-spot tuning often lands just outside matches.
-- Keep **FREQ_CHANGE_HZ** at `500` to avoid unnecessary lookups from very small tuning movements.
+- Keep **FREQ_MATCH_HZ** at `100` as a good starting point; increase slightly if your click-to-spot tuning often lands just outside matches.
+- Keep **FREQ_CHANGE_HZ** at `200` to avoid unnecessary lookups from very small tuning movements.
 - Keep **SPOT_TIMEOUT** at `600` seconds unless you want only very recent spots to match.
 
 ## Build Instructions
