@@ -31,6 +31,7 @@ import tkinter as tk
 import sys
 import json
 import os
+import webbrowser
 
 APP_NAME = "FlexSpotBridge"
 APP_VERSION = "1.0 beta"
@@ -502,6 +503,8 @@ class App:
                 print(f"Failed to clear spots on Flex: {e}")
 
 
+        appmenu.add_command(label=f"About {APP_NAME}", command=self.open_about)
+        appmenu.add_separator()
         appmenu.add_command(label="Preferences...", accelerator="⌘,", command=self.open_settings)
         appmenu.add_command(label="Clear All Spots", accelerator="Command-L", command=clear_spots)
         appmenu.add_separator()
@@ -521,6 +524,114 @@ class App:
         flex_thread = threading.Thread(target=flex_listener, daemon=True)
         cluster_thread.start()
         flex_thread.start()
+
+    def open_about(self):
+        about_win = tk.Toplevel(self.root)
+        about_win.title(f"About {APP_NAME}")
+        dialog_width = 520
+        dialog_height = 320
+        about_win.geometry(f"{dialog_width}x{dialog_height}")
+        about_win.resizable(False, False)
+        about_win.transient(self.root)
+
+        # Center over the main app window.
+        self.root.update_idletasks()
+        root_x = self.root.winfo_x()
+        root_y = self.root.winfo_y()
+        root_w = self.root.winfo_width()
+        root_h = self.root.winfo_height()
+        pos_x = root_x + max((root_w - dialog_width) // 2, 0)
+        pos_y = root_y + max((root_h - dialog_height) // 2, 0)
+        about_win.geometry(f"{dialog_width}x{dialog_height}+{pos_x}+{pos_y}")
+
+        # Give the dialog a bold, colorful look while keeping it lightweight.
+        about_win.configure(bg="#FFF4D6")
+
+        outer = tk.Frame(about_win, bg="#FFF4D6", padx=20, pady=20)
+        outer.pack(expand=True, fill=tk.BOTH)
+
+        banner = tk.Frame(outer, bg="#0A3D62", padx=16, pady=12)
+        banner.pack(fill=tk.X, pady=(0, 14))
+
+        banner_top = tk.Frame(banner, bg="#0A3D62")
+        banner_top.pack(fill=tk.X)
+
+        badge = tk.Canvas(
+            banner_top,
+            width=54,
+            height=54,
+            bg="#0A3D62",
+            highlightthickness=0,
+            bd=0
+        )
+        badge.create_oval(3, 3, 51, 51, fill="#F0932B", outline="#F6E58D", width=2)
+        badge.create_text(27, 27, text="FSB", fill="#0A3D62", font=("Avenir Next", 12, "bold"))
+        badge.pack(side=tk.LEFT, padx=(0, 12))
+
+        title_box = tk.Frame(banner_top, bg="#0A3D62")
+        title_box.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        tk.Label(
+            title_box,
+            text=APP_NAME,
+            font=("Avenir Next", 22, "bold"),
+            fg="#F6E58D",
+            bg="#0A3D62"
+        ).pack(anchor="w")
+
+        tk.Label(
+            title_box,
+            text=f"Version {app_version_label()}",
+            font=("Avenir Next", 12, "bold"),
+            fg="#DFF9FB",
+            bg="#0A3D62"
+        ).pack(anchor="w", pady=(2, 0))
+
+        body = tk.Frame(outer, bg="#FFFFFF", padx=16, pady=14, highlightthickness=2, highlightbackground="#F0932B")
+        body.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(
+            body,
+            text="Created by Bill Cody, K3CDY",
+            font=("Avenir Next", 13),
+            fg="#130F40",
+            bg="#FFFFFF"
+        ).pack(anchor="w", pady=(0, 8))
+
+        github_url = "https://github.com/williamscody/FlexSpotBridge"
+
+        tk.Label(
+            body,
+            text=github_url,
+            font=("Menlo", 12),
+            fg="#0652DD",
+            bg="#FFFFFF",
+            cursor="hand2"
+        ).pack(anchor="w")
+
+        def open_github(_event=None):
+            webbrowser.open(github_url)
+
+        body.bind("<Button-1>", open_github)
+        for child in body.winfo_children():
+            if isinstance(child, tk.Label) and child.cget("text") == github_url:
+                child.bind("<Button-1>", open_github)
+
+        tk.Button(
+            outer,
+            text="Close",
+            command=about_win.destroy,
+            bg="#22A6B3",
+            fg="white",
+            activebackground="#1B9AA6",
+            activeforeground="white",
+            relief=tk.FLAT,
+            padx=16,
+            pady=6
+        ).pack(anchor="e", pady=(12, 0))
+
+        about_win.grab_set()
+        about_win.focus_set()
 
     def open_settings(self):
         settings_win = tk.Toplevel(self.root)
