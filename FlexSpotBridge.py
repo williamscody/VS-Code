@@ -33,7 +33,7 @@ import glob
 
 APP_NAME = "FlexSpotBridge"
 APP_VERSION = "1.0.0"
-APP_PRERELEASE = "beta.2"
+APP_PRERELEASE = "beta.3"
 
 
 def app_version_label():
@@ -61,6 +61,12 @@ REMOVE_DUPLICATE_SPOTS = True
 # If True, show high-volume debug logging in the UI log window.
 VERBOSE_LOGGING = False
 
+# If True, automatically remove spots older than AUTO_CLEAR_SPOTS_AGE_MINUTES.
+AUTO_CLEAR_SPOTS_ENABLED = False
+
+# Age in minutes beyond which spots are automatically removed (1-99).
+AUTO_CLEAR_SPOTS_AGE_MINUTES = 5
+
 # Track Flex panadapter spots by spot ID -> metadata.
 # Example: {"23": {"freq_hz": 7030400, "call": "R4WCQ", "time": 1774154707}}
 flex_spots = {}
@@ -73,6 +79,13 @@ def send_flex_command(command):
     sock.connect((FLEX_IP, FLEX_PORT))
     sock.sendall(f"C1|{command}\n".encode())
     sock.close()
+
+
+def connect_flex_command_socket():
+    """Open a persistent command socket to the Flex API."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect((FLEX_IP, FLEX_PORT))
+    return sock
 
 
 def log_debug(*args, **kwargs):
@@ -133,7 +146,7 @@ def find_exact_flex_spot_call(freq_hz):
 SETTINGS_FILE = os.path.expanduser("~/Library/Preferences/FlexSpotBridge.json")
 
 def load_settings():
-    global FLEX_IP, FLEX_PORT, KEEP_CURRENT_MODE, REMOVE_DUPLICATE_SPOTS, VERBOSE_LOGGING
+    global FLEX_IP, FLEX_PORT, KEEP_CURRENT_MODE, REMOVE_DUPLICATE_SPOTS, VERBOSE_LOGGING, AUTO_CLEAR_SPOTS_ENABLED, AUTO_CLEAR_SPOTS_AGE_MINUTES
     if os.path.exists(SETTINGS_FILE):
         try:
             with open(SETTINGS_FILE, "r") as f:
@@ -143,6 +156,8 @@ def load_settings():
             KEEP_CURRENT_MODE = bool(data.get("KEEP_CURRENT_MODE", KEEP_CURRENT_MODE))
             REMOVE_DUPLICATE_SPOTS = bool(data.get("REMOVE_DUPLICATE_SPOTS", REMOVE_DUPLICATE_SPOTS))
             VERBOSE_LOGGING = bool(data.get("VERBOSE_LOGGING", VERBOSE_LOGGING))
+            AUTO_CLEAR_SPOTS_ENABLED = bool(data.get("AUTO_CLEAR_SPOTS_ENABLED", AUTO_CLEAR_SPOTS_ENABLED))
+            AUTO_CLEAR_SPOTS_AGE_MINUTES = int(data.get("AUTO_CLEAR_SPOTS_AGE_MINUTES", AUTO_CLEAR_SPOTS_AGE_MINUTES))
         except Exception as e:
             print(f"Failed to load settings: {e}")
 
@@ -154,6 +169,8 @@ def save_settings():
             "KEEP_CURRENT_MODE": KEEP_CURRENT_MODE,
             "REMOVE_DUPLICATE_SPOTS": REMOVE_DUPLICATE_SPOTS,
             "VERBOSE_LOGGING": VERBOSE_LOGGING,
+            "AUTO_CLEAR_SPOTS_ENABLED": AUTO_CLEAR_SPOTS_ENABLED,
+            "AUTO_CLEAR_SPOTS_AGE_MINUTES": AUTO_CLEAR_SPOTS_AGE_MINUTES,
         }
         with open(SETTINGS_FILE, "w") as f:
             json.dump(data, f, indent=2)
@@ -161,6 +178,63 @@ def save_settings():
         print(f"Failed to save settings: {e}")
 
 load_settings()
+
+# ------------------------------------------------
+# AUTO-CLEAR OLD SPOTS
+# ------------------------------------------------
+
+def clear_old_spots_task():
+    """Periodically clear spots older than AUTO_CLEAR_SPOTS_AGE_MINUTES."""
+    command_sock = None
+    command_seq = 9000
+
+    while True:
+        time.sleep(30)  # Check every 30 seconds
+        
+        if not AUTO_CLEAR_SPOTS_ENABLED:
+            continue
+        
+        current_time = int(time.time())
+        age_threshold_seconds = AUTO_CLEAR_SPOTS_AGE_MINUTES * 60
+        
+        with flex_spots_lock:
+            spots_to_remove = [
+                spot_id
+                for spot_id, spot in flex_spots.items()
+                if (current_time - spot.get("time", current_time)) > age_threshold_seconds
+            ]
+            
+            for spot_id in spots_to_remove:
+                flex_spots.pop(spot_id, None)
+        
+        if spots_to_remove:
+            try:
+                for spot_id in spots_to_remove:
+                    if command_sock is None:
+                        command_sock = connect_flex_command_socket()
+
+                    try:
+                        command_seq += 1
+                        command_sock.sendall(f"C{command_seq}|spot remove {spot_id}\n".encode())
+                    except Exception:
+                        try:
+                            command_sock.close()
+                        except Exception:
+                            pass
+
+                        command_sock = connect_flex_command_socket()
+                        command_seq += 1
+                        command_sock.sendall(f"C{command_seq}|spot remove {spot_id}\n".encode())
+
+                log_debug(f"Auto-cleared {len(spots_to_remove)} old spots")
+            except Exception as e:
+                log_debug(f"Failed to auto-clear old spots: {e}")
+                if command_sock is not None:
+                    try:
+                        command_sock.close()
+                    except Exception:
+                        pass
+                    command_sock = None
 
 class TextRedirector:
     def __init__(self, widget):
@@ -395,6 +469,9 @@ class App:
         # Start threads
         flex_thread = threading.Thread(target=flex_listener, daemon=True)
         flex_thread.start()
+        
+        clear_old_spots_thread = threading.Thread(target=clear_old_spots_task, daemon=True)
+        clear_old_spots_thread.start()
 
     def _load_about_icon_image(self, size=72):
         """Load the app icon for use in the About dialog."""
@@ -562,7 +639,7 @@ class App:
     def open_settings(self):
         settings_win = tk.Toplevel(self.root)
         settings_win.title("Preferences")
-        settings_win.geometry("400x250")
+        settings_win.geometry("450x320")
 
         # Settings fields
         settings = [
@@ -596,16 +673,39 @@ class App:
         ).grid(row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 8))
         row += 1
 
+        auto_clear_spots_var = tk.BooleanVar(value=AUTO_CLEAR_SPOTS_ENABLED)
+        tk.Checkbutton(
+            settings_win,
+            text="Auto-clear spots older than:",
+            variable=auto_clear_spots_var
+        ).grid(row=row, column=0, sticky="w", padx=8, pady=(6, 8))
+        
+        auto_clear_frame = tk.Frame(settings_win, bg="SystemControlBackgroundColor")
+        auto_clear_frame.grid(row=row, column=1, sticky="w", padx=0)
+        
+        auto_clear_age_var = tk.IntVar(value=AUTO_CLEAR_SPOTS_AGE_MINUTES)
+        auto_clear_spinbox = tk.Spinbox(
+            auto_clear_frame,
+            from_=1,
+            to=99,
+            width=3,
+            textvariable=auto_clear_age_var
+        )
+        auto_clear_spinbox.pack(side=tk.LEFT, padx=(0, 4))
+        
+        tk.Label(auto_clear_frame, text="minutes", bg="SystemControlBackgroundColor").pack(side=tk.LEFT)
+        row += 1
+
         verbose_logging_var = tk.BooleanVar(value=VERBOSE_LOGGING)
         tk.Checkbutton(
             settings_win,
             text="Verbose debug logging",
             variable=verbose_logging_var
-        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 8))
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(6, 8))
         row += 1
 
         def save():
-            global KEEP_CURRENT_MODE, REMOVE_DUPLICATE_SPOTS, VERBOSE_LOGGING
+            global KEEP_CURRENT_MODE, REMOVE_DUPLICATE_SPOTS, VERBOSE_LOGGING, AUTO_CLEAR_SPOTS_ENABLED, AUTO_CLEAR_SPOTS_AGE_MINUTES
             for var_name, entry in entries.items():
                 value = entry.get()
                 if var_name in ["FLEX_PORT"]:
@@ -614,12 +714,14 @@ class App:
                     globals()[var_name] = value
             KEEP_CURRENT_MODE = keep_current_mode_var.get()
             REMOVE_DUPLICATE_SPOTS = remove_duplicate_spots_var.get()
+            AUTO_CLEAR_SPOTS_ENABLED = auto_clear_spots_var.get()
+            AUTO_CLEAR_SPOTS_AGE_MINUTES = auto_clear_age_var.get()
             VERBOSE_LOGGING = verbose_logging_var.get()
             save_settings()
             settings_win.destroy()
             print("Settings saved")
 
-        tk.Button(settings_win, text="OK", command=save).grid(row=row, column=1)
+        tk.Button(settings_win, text="OK", command=save).grid(row=row, column=0, columnspan=3, pady=(8, 0))
 
         def save_from_keyboard(_event=None):
             save()
