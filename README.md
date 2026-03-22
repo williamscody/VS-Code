@@ -35,10 +35,11 @@ SDC -> extra_cluster -> MacLoggerDX -> Mac SmartSDR Panadapter
 - macOS 12 or later (Apple Silicon or Intel)
 - Python 3.9+ (tested with Python 3.14)
 - FlexRadio 6000, 8000 or Aurora series (tested with Flex 8400)
-- Software Defined Connectors (SDC) cluster running locally
+- Software Defined Connectors (SDC) cluster running locally (OPTIONAL)
 - Mac SmartSDR app installed
 - MacLoggerDX installed
-- extra_cluster installed (located in the MacLoggerDX "Extras/Supporting Apps" folder).  Note: extra_cluster is not required unless you choose to grab CW spots decoded by SDC.
+- extra_cluster installed (located in the MacLoggerDX "Extras/Supporting Apps" folder).  
+IN BETA (OPTIONAL - only needed if you want spots coming from SDC.  Otherwise, use any DX Cluster from MacLoggerDX itself.)
 - py2app (for building the app)
 
 ## Settings Explained
