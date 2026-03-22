@@ -32,14 +32,16 @@ import sys
 import json
 import os
 import webbrowser
+import tempfile
+import glob
 
 APP_NAME = "FlexSpotBridge"
-APP_VERSION = "1.0 beta"
-APP_REVISION = 1
+APP_VERSION = "1.0.0"
+APP_PRERELEASE = "beta.1"
 
 
 def app_version_label():
-    return f"{APP_VERSION} (rev {APP_REVISION})"
+    return f"{APP_VERSION}-{APP_PRERELEASE}"
 
 
 current_freq = None
@@ -525,6 +527,53 @@ class App:
         cluster_thread.start()
         flex_thread.start()
 
+    def _load_about_icon_image(self, size=72):
+        """Load the app icon for use in the About dialog."""
+        def _find_app_icon_path():
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            executable_dir = os.path.dirname(os.path.abspath(sys.executable))
+            argv0_dir = os.path.dirname(os.path.abspath(sys.argv[0])) if sys.argv else ""
+
+            candidates = [
+                os.path.join(base_dir, "FlexSpotBridge.icns"),
+                os.path.join(os.getcwd(), "FlexSpotBridge.icns"),
+                os.path.join(executable_dir, "..", "Resources", "FlexSpotBridge.icns"),
+                os.path.join(argv0_dir, "..", "Resources", "FlexSpotBridge.icns"),
+            ]
+
+            for path in candidates:
+                path = os.path.abspath(path)
+                if os.path.exists(path):
+                    return path
+
+            # Last-resort search in app bundle resources.
+            resource_glob = os.path.abspath(os.path.join(executable_dir, "..", "Resources", "*.icns"))
+            matches = glob.glob(resource_glob)
+            if matches:
+                return matches[0]
+
+            return None
+
+        icon_path = _find_app_icon_path()
+        if not icon_path:
+            return None
+
+        # Convert the .icns to .png explicitly so Tk can display it.
+        tmp_png = os.path.join(tempfile.gettempdir(), f"{APP_NAME.lower()}_about_icon_{size}.png")
+        try:
+            subprocess.run(
+                ["sips", "-s", "format", "png", "-z", str(size), str(size), icon_path, "--out", tmp_png],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            if os.path.exists(tmp_png):
+                return tk.PhotoImage(file=tmp_png)
+        except Exception:
+            pass
+
+        return None
+
     def open_about(self):
         about_win = tk.Toplevel(self.root)
         about_win.title(f"About {APP_NAME}")
@@ -556,17 +605,23 @@ class App:
         banner_top = tk.Frame(banner, bg="#0A3D62")
         banner_top.pack(fill=tk.X)
 
-        badge = tk.Canvas(
-            banner_top,
-            width=54,
-            height=54,
-            bg="#0A3D62",
-            highlightthickness=0,
-            bd=0
-        )
-        badge.create_oval(3, 3, 51, 51, fill="#F0932B", outline="#F6E58D", width=2)
-        badge.create_text(27, 27, text="FSB", fill="#0A3D62", font=("Avenir Next", 12, "bold"))
-        badge.pack(side=tk.LEFT, padx=(0, 12))
+        self.about_icon_image = self._load_about_icon_image(size=96)
+        if self.about_icon_image is not None:
+            tk.Label(
+                banner_top,
+                image=self.about_icon_image,
+                bg="#0A3D62"
+            ).pack(side=tk.LEFT, padx=(0, 12))
+        else:
+            # Fallback if icon loading fails.
+            tk.Label(
+                banner_top,
+                text="FSB",
+                font=("Avenir Next", 16, "bold"),
+                fg="#F6E58D",
+                bg="#0A3D62",
+                width=4
+            ).pack(side=tk.LEFT, padx=(0, 12))
 
         title_box = tk.Frame(banner_top, bg="#0A3D62")
         title_box.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -621,11 +676,13 @@ class App:
             outer,
             text="Close",
             command=about_win.destroy,
-            bg="#22A6B3",
-            fg="white",
-            activebackground="#1B9AA6",
-            activeforeground="white",
-            relief=tk.FLAT,
+            bg="#F7F7F7",
+            fg="#111111",
+            activebackground="#EDEDED",
+            activeforeground="#000000",
+            font=("Avenir Next", 13, "bold"),
+            relief=tk.RAISED,
+            bd=1,
             padx=16,
             pady=6
         ).pack(anchor="e", pady=(12, 0))
