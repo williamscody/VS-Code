@@ -1,14 +1,11 @@
 """
-FlexRadio + SDC Cluster + MacLoggerDX Spot Bridge
--------------------------------------------------
+FlexRadio + MacLoggerDX Spot Bridge
+-----------------------------------
 
-This script connects to:
+This script connects to a FlexRadio TCP control port (4992).
 
-1. A FlexRadio TCP control port (4992)
-2. A local SDC DX cluster (port 7373)
-
-It stores incoming cluster spots and when you tune
-the Flex slice near a spotted frequency it:
+It listens for spots already present on the Flex panadapter and
+when you tune a slice to an exact spotted frequency it:
 
 • prints the matched callsign
 • sends the callsign to MacLoggerDX
@@ -17,7 +14,6 @@ the Flex slice near a spotted frequency it:
 Tested environment:
 Flex 8400
 SmartSDR
-SDC cluster
 MacLoggerDX
 Python 3.14
 """
@@ -56,37 +52,19 @@ FLEX_IP = "192.168.68.157"
 # Flex API port
 FLEX_PORT = 4992
 
-# Local SDC cluster
-CLUSTER_HOST = "localhost"
-CLUSTER_PORT = 7373
-
-# Your callsign (cluster login)
-CALLSIGN = "K3CDY"
-
-# Spot validity time
-SPOT_TIMEOUT = 600
-
-# Frequency tolerance for match (Hz)
-FREQ_MATCH_HZ = 100
-
-# Minimum frequency change to trigger spot detection (Hz)
-FREQ_CHANGE_HZ = 200
-
 # If True, do not change slice mode when a spot is matched.
 KEEP_CURRENT_MODE = False
+
+# If True, remove older Flex spots that share the same exact frequency.
+REMOVE_DUPLICATE_SPOTS = True
 
 # If True, show high-volume debug logging in the UI log window.
 VERBOSE_LOGGING = False
 
-# Storage for cluster spots
-spots = []
-
-# Track Flex panadapter spots by spot ID -> frequency (Hz)
+# Track Flex panadapter spots by spot ID -> metadata.
+# Example: {"23": {"freq_hz": 7030400, "call": "R4WCQ", "time": 1774154707}}
 flex_spots = {}
 flex_spots_lock = threading.Lock()
-
-# Treat spots within this delta as same frequency on Flex (Hz)
-FLEX_SPOT_SAME_FREQ_HZ = 1
 
 
 def send_flex_command(command):
@@ -102,13 +80,13 @@ def log_debug(*args, **kwargs):
         print(*args, **kwargs)
 
 
-def remove_duplicate_flex_spots(freq, keep_spot_id, command_sock=None):
+def remove_duplicate_flex_spots(freq_hz, keep_spot_id, command_sock=None):
     """Remove older Flex panadapter spots at the same frequency, keeping one ID."""
     with flex_spots_lock:
         duplicate_ids = [
             spot_id
-            for spot_id, spot_freq in flex_spots.items()
-            if spot_id != keep_spot_id and abs(spot_freq - freq) <= FLEX_SPOT_SAME_FREQ_HZ
+            for spot_id, spot in flex_spots.items()
+            if spot_id != keep_spot_id and spot.get("freq_hz") == freq_hz
         ]
 
         for spot_id in duplicate_ids:
@@ -120,9 +98,33 @@ def remove_duplicate_flex_spots(freq, keep_spot_id, command_sock=None):
                 send_flex_command(f"spot remove {spot_id}")
             else:
                 command_sock.sendall(f"C3|spot remove {spot_id}\n".encode())
-            print(f"Removed older Flex spot id={spot_id} at {freq} Hz")
+            print(f"Removed older Flex spot id={spot_id} at {freq_hz} Hz")
         except Exception as e:
             print(f"Failed to remove Flex spot id={spot_id}: {e}")
+
+
+def find_exact_flex_spot_call(freq_hz):
+    """Return the newest callsign for an exact Flex spot frequency match."""
+    with flex_spots_lock:
+        candidates = [
+            (spot_id, spot)
+            for spot_id, spot in flex_spots.items()
+            if spot.get("freq_hz") == freq_hz and spot.get("call")
+        ]
+
+    if not candidates:
+        return None
+
+    # Prefer the highest numeric spot ID as the newest event.
+    def spot_sort_key(item):
+        spot_id, spot = item
+        try:
+            return int(spot_id)
+        except ValueError:
+            return int(spot.get("time", 0))
+
+    newest_id, newest_spot = max(candidates, key=spot_sort_key)
+    return newest_spot.get("call"), newest_id
 
 # ------------------------------------------------
 # SETTINGS PERSISTENCE
@@ -131,20 +133,15 @@ def remove_duplicate_flex_spots(freq, keep_spot_id, command_sock=None):
 SETTINGS_FILE = os.path.expanduser("~/Library/Preferences/FlexSpotBridge.json")
 
 def load_settings():
-    global FLEX_IP, FLEX_PORT, CLUSTER_HOST, CLUSTER_PORT, CALLSIGN, SPOT_TIMEOUT, FREQ_MATCH_HZ, FREQ_CHANGE_HZ, KEEP_CURRENT_MODE, VERBOSE_LOGGING
+    global FLEX_IP, FLEX_PORT, KEEP_CURRENT_MODE, REMOVE_DUPLICATE_SPOTS, VERBOSE_LOGGING
     if os.path.exists(SETTINGS_FILE):
         try:
             with open(SETTINGS_FILE, "r") as f:
                 data = json.load(f)
             FLEX_IP = data.get("FLEX_IP", FLEX_IP)
             FLEX_PORT = int(data.get("FLEX_PORT", FLEX_PORT))
-            CLUSTER_HOST = data.get("CLUSTER_HOST", CLUSTER_HOST)
-            CLUSTER_PORT = int(data.get("CLUSTER_PORT", CLUSTER_PORT))
-            CALLSIGN = data.get("CALLSIGN", CALLSIGN)
-            SPOT_TIMEOUT = int(data.get("SPOT_TIMEOUT", SPOT_TIMEOUT))
-            FREQ_MATCH_HZ = int(data.get("FREQ_MATCH_HZ", FREQ_MATCH_HZ))
-            FREQ_CHANGE_HZ = int(data.get("FREQ_CHANGE_HZ", FREQ_CHANGE_HZ))
             KEEP_CURRENT_MODE = bool(data.get("KEEP_CURRENT_MODE", KEEP_CURRENT_MODE))
+            REMOVE_DUPLICATE_SPOTS = bool(data.get("REMOVE_DUPLICATE_SPOTS", REMOVE_DUPLICATE_SPOTS))
             VERBOSE_LOGGING = bool(data.get("VERBOSE_LOGGING", VERBOSE_LOGGING))
         except Exception as e:
             print(f"Failed to load settings: {e}")
@@ -154,13 +151,8 @@ def save_settings():
         data = {
             "FLEX_IP": FLEX_IP,
             "FLEX_PORT": FLEX_PORT,
-            "CLUSTER_HOST": CLUSTER_HOST,
-            "CLUSTER_PORT": CLUSTER_PORT,
-            "CALLSIGN": CALLSIGN,
-            "SPOT_TIMEOUT": SPOT_TIMEOUT,
-            "FREQ_MATCH_HZ": FREQ_MATCH_HZ,
-            "FREQ_CHANGE_HZ": FREQ_CHANGE_HZ,
             "KEEP_CURRENT_MODE": KEEP_CURRENT_MODE,
+            "REMOVE_DUPLICATE_SPOTS": REMOVE_DUPLICATE_SPOTS,
             "VERBOSE_LOGGING": VERBOSE_LOGGING,
         }
         with open(SETTINGS_FILE, "w") as f:
@@ -252,111 +244,6 @@ def auto_mode(sock, slice_id, freq):
 
 
 # ------------------------------------------------
-# FIND MATCHING SPOT
-# ------------------------------------------------
-
-def find_spot(freq):
-
-    now = time.time()
-    log_debug(f"Checking {len(spots)} spots for freq {freq}")
-
-    # Iterate newest-first so latest spot wins when multiple match.
-    for spot in reversed(spots):
-
-        if now - spot["time"] > SPOT_TIMEOUT:
-            continue
-
-        log_debug("Checking spot:", spot["call"], spot["freq"],
-                  "diff:", abs(spot["freq"] - freq))
-
-        if abs(spot["freq"] - freq) <= FREQ_MATCH_HZ:
-            log_debug("Latest matching spot selected:", spot["call"], spot["freq"])
-            return spot["call"]
-
-    return None
-
-# ------------------------------------------------
-# CLUSTER LISTENER
-# ------------------------------------------------
-
-def cluster_listener():
-
-    print("Connecting to DX cluster...")
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect((CLUSTER_HOST, CLUSTER_PORT))
-
-    print("DX cluster connected")
-
-    # send callsign login
-    sock.sendall((CALLSIGN + "\n").encode())
-
-    buffer = ""
-
-    while True:
-
-        data = sock.recv(4096).decode(errors="ignore")
-
-        if not data:
-            continue
-
-        buffer += data
-
-        while "\n" in buffer:
-
-            line, buffer = buffer.split("\n", 1)
-
-            line = line.strip()
-
-            log_debug("Cluster:", line)
-
-            m = re.search(
-                r"DX de\s+\S+:\s+(\d+(?:\.\d+)?)\s+([A-Z0-9/]+)",
-                line,
-                re.IGNORECASE
-            )
-
-            if m:
-
-                freq_str = m.group(1)
-                freq_float = float(freq_str)
-                if freq_float < 100:
-                    freq = freq_float * 1e6  # MHz
-                else:
-                    freq = freq_float * 1000  # kHz
-                call = m.group(2)
-
-                # Keep only the latest spot per exact frequency in local cache.
-                before_count = len(spots)
-                spots[:] = [spot for spot in spots if spot["freq"] != freq]
-                removed_count = before_count - len(spots)
-                if removed_count:
-                    log_debug(f"Removed {removed_count} older spot(s) at {freq} Hz")
-
-                spots.append({
-                    "freq": freq,
-                    "call": call,
-                    "time": time.time()
-                })
-
-                log_debug("Spot stored:", call, freq)
-
-                # check if radio already tuned to this spot
-                global current_freq
-
-                if current_freq is not None:
-
-                    diff = abs(current_freq - freq)
-
-                    log_debug("Checking current freq:", current_freq,
-                              "spot:", freq, "diff:", diff)
-
-                    if diff <= FREQ_MATCH_HZ:
-
-                        print("Matched spot:", call)
-
-                        set_mldx_call(call)
-# ------------------------------------------------
 # FLEX RADIO LISTENER
 # ------------------------------------------------
 
@@ -383,93 +270,72 @@ def flex_listener():
             continue
 
         for line in data.splitlines():
+            log_debug("Flex line:", line)
+
             spot_match = re.search(
-                r"S[^|]+\|spot\s+(\d+).*?(?:rx_freq|freq)=(\d+(?:\.\d+)?)",
+                r"S[^|]+\|spot\s+(\d+)\b",
                 line
             )
-            if spot_match:
-                spot_id = spot_match.group(1)
-                spot_freq = float(spot_match.group(2)) * 1e6
-                with flex_spots_lock:
-                    flex_spots[spot_id] = spot_freq
-                remove_duplicate_flex_spots(spot_freq, spot_id, command_sock=sock)
 
             removed_match = re.search(r"S[^|]+\|spot\s+removed\s+(\d+)", line)
             if removed_match:
                 removed_id = removed_match.group(1)
                 with flex_spots_lock:
                     flex_spots.pop(removed_id, None)
+                continue
 
-        m = re.search(r"S[^|]+\|slice\s+(\d+).*RF_frequency=(\d+\.\d+)", data)
-        
-        if m:
-        
-            slice_id = m.group(1)
-            
-            freq = float(m.group(2)) * 1e6
-            global current_freq
-            previous_freq = current_freq
+            if spot_match:
+                spot_id = spot_match.group(1)
 
-            log_debug("Current frequency:", freq)
+                freq_match = re.search(r"(?:rx_freq|freq)=(\d+(?:\.\d+)?)", line)
+                call_match = re.search(r"callsign=([^\s]+)", line)
+                timestamp_match = re.search(r"timestamp=(\d+)", line)
 
-            # Compare each update to the immediately previous frequency.
-            if previous_freq is None:
-                freq_change = 0
-                log_debug("Initial frequency captured; waiting for next change to evaluate threshold")
-            else:
-                freq_change = abs(freq - previous_freq)
+                if not freq_match or not call_match:
+                    continue
 
-                if freq_change >= FREQ_CHANGE_HZ:
-                    log_debug(f"Frequency change: {freq_change} Hz (threshold: {FREQ_CHANGE_HZ} Hz)")
+                spot_freq_hz = int(round(float(freq_match.group(1)) * 1e6))
+                call = call_match.group(1)
+                spot_time = int(timestamp_match.group(1)) if timestamp_match else int(time.time())
 
-                    call = find_spot(freq)
+                with flex_spots_lock:
+                    flex_spots[spot_id] = {
+                        "freq_hz": spot_freq_hz,
+                        "call": call,
+                        "time": spot_time,
+                    }
 
-                    if call:
-                        print("Matched spot:", call)
+                if REMOVE_DUPLICATE_SPOTS:
+                    remove_duplicate_flex_spots(spot_freq_hz, spot_id, command_sock=sock)
 
+            slice_match = re.search(r"S[^|]+\|slice\s+(\d+).*RF_frequency=(\d+\.\d+)", line)
+
+            if slice_match:
+                slice_id = slice_match.group(1)
+                freq_hz = int(round(float(slice_match.group(2)) * 1e6))
+
+                global current_freq
+                previous_freq = current_freq
+
+                # Only evaluate when the VFO actually changes frequency.
+                if previous_freq is None:
+                    log_debug("Initial frequency captured; waiting for next VFO change")
+                elif freq_hz != previous_freq:
+                    log_debug(f"VFO change detected: {previous_freq} -> {freq_hz}")
+
+                    match = find_exact_flex_spot_call(freq_hz)
+                    if match:
+                        call, match_spot_id = match
+                        print(f"Matched exact Flex spot: {call} (id={match_spot_id}, freq={freq_hz} Hz)")
                         set_mldx_call(call)
 
                         if KEEP_CURRENT_MODE:
                             print("Keep current mode is enabled; not changing mode")
                         else:
-                            auto_mode(sock, slice_id, freq)
-                else:
-                    log_debug(f"Frequency change: {freq_change} Hz - below threshold ({FREQ_CHANGE_HZ} Hz), skipping spot check")
+                            auto_mode(sock, slice_id, freq_hz)
 
-            # Always update baseline frequency for the next incoming change.
-            current_freq = freq
+                current_freq = freq_hz
             
-# ------------------------------------------------
-# MAIN
-# ------------------------------------------------
-
-def main():
-
-    cluster_thread = threading.Thread(
-        target=cluster_listener,
-        daemon=True
-    )
-
-    flex_thread = threading.Thread(
-        target=flex_listener,
-        daemon=True
-    )
-
-    cluster_thread.start()
-    flex_thread.start()
-
-class TextRedirector:
-    def __init__(self, widget):
-        self.widget = widget
-
-    def write(self, str):
-        self.widget.insert(tk.END, str)
-        self.widget.see(tk.END)
-
-    def flush(self):
-        pass
-
-
 class App:
     def __init__(self, root):
         self.root = root
@@ -495,9 +361,8 @@ class App:
             try:
                 send_flex_command("spot clear")
                 global current_freq
-                removed_spots = len(spots)
-                spots.clear()
                 with flex_spots_lock:
+                    removed_spots = len(flex_spots)
                     flex_spots.clear()
                 current_freq = None
                 print(f"All spots cleared on Flex panadapter. Local spot memory reset ({removed_spots} spots removed).")
@@ -522,9 +387,7 @@ class App:
         root.bind_all("<Command-comma>", lambda e: self.open_settings())
 
         # Start threads
-        cluster_thread = threading.Thread(target=cluster_listener, daemon=True)
         flex_thread = threading.Thread(target=flex_listener, daemon=True)
-        cluster_thread.start()
         flex_thread.start()
 
     def _load_about_icon_image(self, size=72):
@@ -693,18 +556,12 @@ class App:
     def open_settings(self):
         settings_win = tk.Toplevel(self.root)
         settings_win.title("Preferences")
-        settings_win.geometry("400x380")
+        settings_win.geometry("400x250")
 
         # Settings fields
         settings = [
             ("FLEX_IP", "FLEX_IP"),
             ("FLEX_PORT", "FLEX_PORT"),
-            ("CLUSTER_HOST", "CLUSTER_HOST"),
-            ("CLUSTER_PORT", "CLUSTER_PORT"),
-            ("CALLSIGN", "CALLSIGN"),
-            ("SPOT_TIMEOUT", "SPOT_TIMEOUT"),
-            ("FREQ_MATCH_HZ", "FREQ_MATCH_HZ"),
-            ("FREQ_CHANGE_HZ", "FREQ_CHANGE_HZ"),
         ]
 
         entries = {}
@@ -725,6 +582,14 @@ class App:
         ).grid(row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(6, 8))
         row += 1
 
+        remove_duplicate_spots_var = tk.BooleanVar(value=REMOVE_DUPLICATE_SPOTS)
+        tk.Checkbutton(
+            settings_win,
+            text="Remove older spots at same frequency",
+            variable=remove_duplicate_spots_var
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 8))
+        row += 1
+
         verbose_logging_var = tk.BooleanVar(value=VERBOSE_LOGGING)
         tk.Checkbutton(
             settings_win,
@@ -734,14 +599,15 @@ class App:
         row += 1
 
         def save():
-            global KEEP_CURRENT_MODE, VERBOSE_LOGGING
+            global KEEP_CURRENT_MODE, REMOVE_DUPLICATE_SPOTS, VERBOSE_LOGGING
             for var_name, entry in entries.items():
                 value = entry.get()
-                if var_name in ["FLEX_PORT", "CLUSTER_PORT", "SPOT_TIMEOUT", "FREQ_MATCH_HZ", "FREQ_CHANGE_HZ"]:
+                if var_name in ["FLEX_PORT"]:
                     globals()[var_name] = int(value)
                 else:
                     globals()[var_name] = value
             KEEP_CURRENT_MODE = keep_current_mode_var.get()
+            REMOVE_DUPLICATE_SPOTS = remove_duplicate_spots_var.get()
             VERBOSE_LOGGING = verbose_logging_var.get()
             save_settings()
             settings_win.destroy()
