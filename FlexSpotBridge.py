@@ -33,7 +33,7 @@ import glob
 
 APP_NAME = "FlexSpotBridge"
 APP_VERSION = "1.0.0"
-APP_PRERELEASE = "beta.1"
+APP_PRERELEASE = "beta.2"
 
 
 def app_version_label():
@@ -372,7 +372,7 @@ class App:
 
         appmenu.add_command(label=f"About {APP_NAME}", command=self.open_about)
         appmenu.add_separator()
-        appmenu.add_command(label="Preferences...", accelerator="⌘,", command=self.open_settings)
+        appmenu.add_command(label="Preferences...", accelerator="Command+,", command=self.open_settings)
         appmenu.add_command(label="Clear All Spots", accelerator="Command-L", command=clear_spots)
         appmenu.add_separator()
         appmenu.add_command(label="Quit", command=root.quit)
@@ -383,8 +383,14 @@ class App:
 
         root.config(menu=menubar)
 
-        # Standard macOS shortcut for Preferences
-        root.bind_all("<Command-comma>", lambda e: self.open_settings())
+        # Standard macOS shortcut for Preferences (Command+,)
+        def open_settings_shortcut(_event=None):
+            self.open_settings()
+            return "break"
+
+        root.bind_all("<Command-comma>", open_settings_shortcut)
+        root.bind_all("<Command-KeyPress-comma>", open_settings_shortcut)
+        root.bind_all("<Command-,>", open_settings_shortcut)
 
         # Start threads
         flex_thread = threading.Thread(target=flex_listener, daemon=True)
@@ -614,6 +620,13 @@ class App:
             print("Settings saved")
 
         tk.Button(settings_win, text="OK", command=save).grid(row=row, column=1)
+
+        def save_from_keyboard(_event=None):
+            save()
+            return "break"
+
+        settings_win.bind("<Return>", save_from_keyboard)
+        settings_win.bind("<KP_Enter>", save_from_keyboard)
 
 
 if __name__ == "__main__":

@@ -1,15 +1,6 @@
 # FlexSpotBridge
 
-Current release: **1.0.0-beta.1**
-
-## Versioning
-FlexSpotBridge uses Semantic Versioning with standard prerelease tags:
-
-- Beta builds: `1.0.0-beta.1`, `1.0.0-beta.2`, ...
-- Release candidates: `1.0.0-rc.1`, `1.0.0-rc.2`, ...
-- Stable release: `1.0.0`
-
-For each new stable line, increment the version and repeat as needed (for example `1.1.0-beta.1`).
+Current release: **1.0.0-beta.2**
 
 ## Overview
 The Windows version of SmartSDR has a feature missing from Mac SmartSDR.  When clicking on a panadapter spot in the Windows version, that spot information is sent out from the app for use by other applications.  That function is not present in Mac SmartSDR.
@@ -82,3 +73,12 @@ DX source(s) -> Flex panadapter spots -> FlexSpotBridge -> MacLoggerDX
 
 ## License
 MIT License
+
+## Versioning
+FlexSpotBridge uses Semantic Versioning with standard prerelease tags:
+
+- Beta builds: `1.0.0-beta.1`, `1.0.0-beta.2`, ...
+- Release candidates: `1.0.0-rc.1`, `1.0.0-rc.2`, ...
+- Stable release: `1.0.0`
+
+For each new stable line, increment the version and repeat as needed (for example `1.1.0-beta.1`).
