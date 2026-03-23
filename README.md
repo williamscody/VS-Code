@@ -9,21 +9,15 @@ With this app, you can click on any spot that appears in your panadapter and tun
 
 FlexSpotBridge provides a GUI for monitoring (log output), settings, and clearing panadapter spots.
 
-The spot flow is:
-
-DX source(s) -> Flex panadapter spots -> FlexSpotBridge -> MacLoggerDX
-
-
 ## Features
 - Monitors FlexRadio spot and slice updates in real time
 - Automatically sends matched callsigns to MacLoggerDX
 - Optional automatic mode switching based on band-plan ranges
-- Optional duplicate-spot cleanup using a configurable frequency threshold (Hz)
+- Optional duplicate-spot cleanup using a configurable duplicate frequency threshold (Hz)
 - Optional automatic removal of old spots by age
-- Spot age color buckets for **Now**, **Red age**, and **Yellow age**
+- Custom spot colors and backgrounds, configurable based on age
 - Clickable color swatches with native macOS color picker integration
 - Independent toggles for updating spot text color and background color
-- Per-bucket background **None** option (sends empty `background_color=`)
 - GUI window with live log output
 - User-adjustable settings (radio IP/port and behavior toggles)
 - Menu bar integration with Preferences and Clear All Spots (⌘L)
@@ -34,16 +28,16 @@ DX source(s) -> Flex panadapter spots -> FlexSpotBridge -> MacLoggerDX
 - FlexRadio 6000, 8000 or Aurora series (tested with Flex 8400)
 - Mac SmartSDR app installed
 - MacLoggerDX installed
-- A spot source feeding spots into the Flex panadapter (for example MacLoggerDX or SDC)
+- A spot source feeding spots into the Flex panadapter (for example MacLoggerDX internal cluster or SDC)
 - py2app (for building the app)
 
 ## Settings Explained
 - **FLEX_IP**: The IP address of your FlexRadio (e.g., `192.168.68.157`)
 - **FLEX_PORT**: The FlexRadio TCP API port (default: `4992`)
-- **Keep current mode** (checkbox): When enabled, FlexSpotBridge will not change the slice mode when a spot is matched. When disabled, FlexSpotBridge can change mode automatically according to its band-plan logic.
+- **Keep current mode** (checkbox): When enabled, FlexSpotBridge will not change the slice mode when a spot is matched. When disabled, FlexSpotBridge will allow mode change according to band-plan logic.
 - **Remove older spots at same frequency** (checkbox): When enabled, FlexSpotBridge removes older Flex spots that are within the configured duplicate threshold and keeps only the newest one.
 - **Duplicate threshold** (spinbox): Frequency distance in Hz used to determine whether two spots are duplicates. Default is **25 Hz**. A new spot within this threshold of an existing spot is treated as a duplicate.
-- **Auto-clear spots older than:** (checkbox + spinbox): When enabled, FlexSpotBridge automatically removes spots that are older than the specified number of minutes. Use the spinbox to adjust the age threshold from 1 to 99 minutes (default: 5 minutes). The spinbox supports up/down arrow buttons, keyboard arrow keys, and direct numeric entry.
+- **Auto-clear spots older than:** (checkbox + spinbox): When enabled, FlexSpotBridge automatically removes spots that are older than the specified number of minutes. Use the spinbox to adjust the age threshold from 1 to 99 minutes. The spinbox supports up/down arrow buttons, keyboard arrow keys, and direct numeric entry.
 - **Verbose debug logging** (checkbox): When enabled, FlexSpotBridge prints detailed Flex processing logs. Leave this disabled for cleaner output and lower UI logging overhead.
 - **Spot Age Colors** section:
    - **Text row**: Choose text colors for the three age buckets (**Now**, **Red**, **Yellow**).
@@ -54,8 +48,8 @@ DX source(s) -> Flex panadapter spots -> FlexSpotBridge -> MacLoggerDX
    - **Update spot text color** and **Update spot background color**: Enable either feature independently or both together.
 
 ## Recommended Defaults for CW Operators
-- Enable **Keep current mode** in Preferences so FlexSpotBridge does not switch out of CW on a matched spot.
-- Keep **Remove older spots at same frequency** enabled so stale duplicates are automatically cleaned up.
+- Enable **Keep current mode** in Preferences so FlexSpotBridge does not switch out of CW on a matched spot; especially handy for contests.
+- Keep **Remove older spots at same frequency** enabled so stale duplicates are automatically cleaned up.  Duplicate threshold should be 50-100Hz depending on CW traffic density.
 - Optionally enable **Auto-clear spots older than:** and set to 5-10 minutes to keep the panadapter clean of old spots.
 
 ## Build Instructions
