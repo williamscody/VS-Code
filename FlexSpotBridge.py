@@ -24,6 +24,7 @@ import time
 import re
 import threading
 import tkinter as tk
+from tkinter import colorchooser
 import sys
 import json
 import os
@@ -33,7 +34,7 @@ import glob
 
 APP_NAME = "FlexSpotBridge"
 APP_VERSION = "1.0.0"
-APP_PRERELEASE = "beta.3"
+APP_PRERELEASE = "beta.4"
 
 
 def app_version_label():
@@ -58,6 +59,9 @@ KEEP_CURRENT_MODE = False
 # If True, remove older Flex spots that share the same exact frequency.
 REMOVE_DUPLICATE_SPOTS = True
 
+# Any new spot within this many Hz of an older spot is treated as a duplicate.
+DUPLICATE_SPOT_THRESHOLD_HZ = 25
+
 # If True, show high-volume debug logging in the UI log window.
 VERBOSE_LOGGING = False
 
@@ -67,10 +71,47 @@ AUTO_CLEAR_SPOTS_ENABLED = False
 # Age in minutes beyond which spots are automatically removed (1-99).
 AUTO_CLEAR_SPOTS_AGE_MINUTES = 5
 
+# Spot age-based color thresholds and values.
+# Ages are interpreted as:
+# - 0 to SPOT_AGE_RED_MINUTES-1: SPOT_COLOR_NOW
+# - SPOT_AGE_RED_MINUTES to SPOT_AGE_YELLOW_MINUTES-1: SPOT_COLOR_RED
+# - SPOT_AGE_YELLOW_MINUTES and older: SPOT_COLOR_YELLOW
+DEFAULT_SPOT_COLOR_NOW = "#E141E1"
+DEFAULT_SPOT_COLOR_RED = "#FF2D00"
+DEFAULT_SPOT_COLOR_YELLOW = "#FFFF00"
+DEFAULT_SPOT_BG_COLOR_NOW = "none"
+DEFAULT_SPOT_BG_COLOR_RED = "none"
+DEFAULT_SPOT_BG_COLOR_YELLOW = "none"
+
+SPOT_AGE_RED_MINUTES = 5
+SPOT_AGE_YELLOW_MINUTES = 15
+SPOT_COLOR_NOW = DEFAULT_SPOT_COLOR_NOW
+SPOT_COLOR_RED = DEFAULT_SPOT_COLOR_RED
+SPOT_COLOR_YELLOW = DEFAULT_SPOT_COLOR_YELLOW
+SPOT_BG_COLOR_NOW = DEFAULT_SPOT_BG_COLOR_NOW
+SPOT_BG_COLOR_RED = DEFAULT_SPOT_BG_COLOR_RED
+SPOT_BG_COLOR_YELLOW = DEFAULT_SPOT_BG_COLOR_YELLOW
+
+# If True, set Flex spot text color based on age bucket.
+ENABLE_SPOT_TEXT_COLORS = True
+
+# If True, also set Flex spot background_color based on the same age bucket color.
+ENABLE_SPOT_BACKGROUND_COLORS = False
+
 # Track Flex panadapter spots by spot ID -> metadata.
 # Example: {"23": {"freq_hz": 7030400, "call": "R4WCQ", "time": 1774154707}}
 flex_spots = {}
 flex_spots_lock = threading.Lock()
+flex_command_seq = 2
+flex_command_seq_lock = threading.Lock()
+
+
+def next_flex_command_seq():
+    """Return the next command sequence number for the listener socket."""
+    global flex_command_seq
+    with flex_command_seq_lock:
+        flex_command_seq += 1
+        return flex_command_seq
 
 
 def send_flex_command(command):
@@ -94,12 +135,16 @@ def log_debug(*args, **kwargs):
 
 
 def remove_duplicate_flex_spots(freq_hz, keep_spot_id, command_sock=None):
-    """Remove older Flex panadapter spots at the same frequency, keeping one ID."""
+    """Remove older Flex spots within DUPLICATE_SPOT_THRESHOLD_HZ, keeping one ID."""
     with flex_spots_lock:
         duplicate_ids = [
             spot_id
             for spot_id, spot in flex_spots.items()
-            if spot_id != keep_spot_id and spot.get("freq_hz") == freq_hz
+            if (
+                spot_id != keep_spot_id
+                and spot.get("freq_hz") is not None
+                and abs(int(spot.get("freq_hz")) - int(freq_hz)) <= DUPLICATE_SPOT_THRESHOLD_HZ
+            )
         ]
 
         for spot_id in duplicate_ids:
@@ -110,8 +155,11 @@ def remove_duplicate_flex_spots(freq_hz, keep_spot_id, command_sock=None):
             if command_sock is None:
                 send_flex_command(f"spot remove {spot_id}")
             else:
-                command_sock.sendall(f"C3|spot remove {spot_id}\n".encode())
-            print(f"Removed older Flex spot id={spot_id} at {freq_hz} Hz")
+                command_seq = next_flex_command_seq()
+                command_sock.sendall(f"C{command_seq}|spot remove {spot_id}\n".encode())
+            print(
+                f"Removed older Flex spot id={spot_id} within {DUPLICATE_SPOT_THRESHOLD_HZ} Hz of {freq_hz} Hz"
+            )
         except Exception as e:
             print(f"Failed to remove Flex spot id={spot_id}: {e}")
 
@@ -146,7 +194,10 @@ def find_exact_flex_spot_call(freq_hz):
 SETTINGS_FILE = os.path.expanduser("~/Library/Preferences/FlexSpotBridge.json")
 
 def load_settings():
-    global FLEX_IP, FLEX_PORT, KEEP_CURRENT_MODE, REMOVE_DUPLICATE_SPOTS, VERBOSE_LOGGING, AUTO_CLEAR_SPOTS_ENABLED, AUTO_CLEAR_SPOTS_AGE_MINUTES
+    global FLEX_IP, FLEX_PORT, KEEP_CURRENT_MODE, REMOVE_DUPLICATE_SPOTS, DUPLICATE_SPOT_THRESHOLD_HZ, VERBOSE_LOGGING, AUTO_CLEAR_SPOTS_ENABLED, AUTO_CLEAR_SPOTS_AGE_MINUTES
+    global SPOT_AGE_RED_MINUTES, SPOT_AGE_YELLOW_MINUTES, SPOT_COLOR_NOW, SPOT_COLOR_RED, SPOT_COLOR_YELLOW
+    global SPOT_BG_COLOR_NOW, SPOT_BG_COLOR_RED, SPOT_BG_COLOR_YELLOW
+    global ENABLE_SPOT_TEXT_COLORS, ENABLE_SPOT_BACKGROUND_COLORS
     if os.path.exists(SETTINGS_FILE):
         try:
             with open(SETTINGS_FILE, "r") as f:
@@ -155,9 +206,44 @@ def load_settings():
             FLEX_PORT = int(data.get("FLEX_PORT", FLEX_PORT))
             KEEP_CURRENT_MODE = bool(data.get("KEEP_CURRENT_MODE", KEEP_CURRENT_MODE))
             REMOVE_DUPLICATE_SPOTS = bool(data.get("REMOVE_DUPLICATE_SPOTS", REMOVE_DUPLICATE_SPOTS))
+            DUPLICATE_SPOT_THRESHOLD_HZ = int(data.get("DUPLICATE_SPOT_THRESHOLD_HZ", DUPLICATE_SPOT_THRESHOLD_HZ))
             VERBOSE_LOGGING = bool(data.get("VERBOSE_LOGGING", VERBOSE_LOGGING))
             AUTO_CLEAR_SPOTS_ENABLED = bool(data.get("AUTO_CLEAR_SPOTS_ENABLED", AUTO_CLEAR_SPOTS_ENABLED))
             AUTO_CLEAR_SPOTS_AGE_MINUTES = int(data.get("AUTO_CLEAR_SPOTS_AGE_MINUTES", AUTO_CLEAR_SPOTS_AGE_MINUTES))
+            SPOT_AGE_RED_MINUTES = int(data.get("SPOT_AGE_RED_MINUTES", SPOT_AGE_RED_MINUTES))
+            SPOT_AGE_YELLOW_MINUTES = int(data.get("SPOT_AGE_YELLOW_MINUTES", SPOT_AGE_YELLOW_MINUTES))
+            SPOT_COLOR_NOW = str(data.get("SPOT_COLOR_NOW", SPOT_COLOR_NOW))
+            SPOT_COLOR_RED = str(data.get("SPOT_COLOR_RED", SPOT_COLOR_RED))
+            SPOT_COLOR_YELLOW = str(data.get("SPOT_COLOR_YELLOW", SPOT_COLOR_YELLOW))
+
+            # On startup, initialize background colors to defaults when older
+            # settings files do not yet include dedicated background colors.
+            if "SPOT_BG_COLOR_NOW" in data:
+                loaded_now_bg = str(data.get("SPOT_BG_COLOR_NOW", SPOT_BG_COLOR_NOW)).strip()
+                SPOT_BG_COLOR_NOW = loaded_now_bg if loaded_now_bg else "none"
+            else:
+                SPOT_BG_COLOR_NOW = DEFAULT_SPOT_BG_COLOR_NOW
+
+            if "SPOT_BG_COLOR_RED" in data:
+                loaded_red_bg = str(data.get("SPOT_BG_COLOR_RED", SPOT_BG_COLOR_RED)).strip()
+                SPOT_BG_COLOR_RED = loaded_red_bg if loaded_red_bg else "none"
+            else:
+                SPOT_BG_COLOR_RED = DEFAULT_SPOT_BG_COLOR_RED
+
+            if "SPOT_BG_COLOR_YELLOW" in data:
+                loaded_yellow_bg = str(data.get("SPOT_BG_COLOR_YELLOW", SPOT_BG_COLOR_YELLOW)).strip()
+                SPOT_BG_COLOR_YELLOW = loaded_yellow_bg if loaded_yellow_bg else "none"
+            else:
+                SPOT_BG_COLOR_YELLOW = DEFAULT_SPOT_BG_COLOR_YELLOW
+            ENABLE_SPOT_TEXT_COLORS = bool(data.get("ENABLE_SPOT_TEXT_COLORS", ENABLE_SPOT_TEXT_COLORS))
+            ENABLE_SPOT_BACKGROUND_COLORS = bool(data.get("ENABLE_SPOT_BACKGROUND_COLORS", ENABLE_SPOT_BACKGROUND_COLORS))
+
+            if SPOT_AGE_RED_MINUTES < 1:
+                SPOT_AGE_RED_MINUTES = 1
+            if SPOT_AGE_YELLOW_MINUTES <= SPOT_AGE_RED_MINUTES:
+                SPOT_AGE_YELLOW_MINUTES = SPOT_AGE_RED_MINUTES + 1
+            if DUPLICATE_SPOT_THRESHOLD_HZ < 0:
+                DUPLICATE_SPOT_THRESHOLD_HZ = 0
         except Exception as e:
             print(f"Failed to load settings: {e}")
 
@@ -168,9 +254,20 @@ def save_settings():
             "FLEX_PORT": FLEX_PORT,
             "KEEP_CURRENT_MODE": KEEP_CURRENT_MODE,
             "REMOVE_DUPLICATE_SPOTS": REMOVE_DUPLICATE_SPOTS,
+            "DUPLICATE_SPOT_THRESHOLD_HZ": DUPLICATE_SPOT_THRESHOLD_HZ,
             "VERBOSE_LOGGING": VERBOSE_LOGGING,
             "AUTO_CLEAR_SPOTS_ENABLED": AUTO_CLEAR_SPOTS_ENABLED,
             "AUTO_CLEAR_SPOTS_AGE_MINUTES": AUTO_CLEAR_SPOTS_AGE_MINUTES,
+            "SPOT_AGE_RED_MINUTES": SPOT_AGE_RED_MINUTES,
+            "SPOT_AGE_YELLOW_MINUTES": SPOT_AGE_YELLOW_MINUTES,
+            "SPOT_COLOR_NOW": SPOT_COLOR_NOW,
+            "SPOT_COLOR_RED": SPOT_COLOR_RED,
+            "SPOT_COLOR_YELLOW": SPOT_COLOR_YELLOW,
+            "SPOT_BG_COLOR_NOW": SPOT_BG_COLOR_NOW,
+            "SPOT_BG_COLOR_RED": SPOT_BG_COLOR_RED,
+            "SPOT_BG_COLOR_YELLOW": SPOT_BG_COLOR_YELLOW,
+            "ENABLE_SPOT_TEXT_COLORS": ENABLE_SPOT_TEXT_COLORS,
+            "ENABLE_SPOT_BACKGROUND_COLORS": ENABLE_SPOT_BACKGROUND_COLORS,
         }
         with open(SETTINGS_FILE, "w") as f:
             json.dump(data, f, indent=2)
@@ -178,6 +275,24 @@ def save_settings():
         print(f"Failed to save settings: {e}")
 
 load_settings()
+
+
+def spot_color_for_age(age_seconds):
+    """Choose the configured spot color based on spot age."""
+    if age_seconds >= SPOT_AGE_YELLOW_MINUTES * 60:
+        return SPOT_COLOR_YELLOW
+    if age_seconds >= SPOT_AGE_RED_MINUTES * 60:
+        return SPOT_COLOR_RED
+    return SPOT_COLOR_NOW
+
+
+def spot_background_color_for_age(age_seconds):
+    """Choose the configured spot background color based on spot age."""
+    if age_seconds >= SPOT_AGE_YELLOW_MINUTES * 60:
+        return SPOT_BG_COLOR_YELLOW
+    if age_seconds >= SPOT_AGE_RED_MINUTES * 60:
+        return SPOT_BG_COLOR_RED
+    return SPOT_BG_COLOR_NOW
 
 # ------------------------------------------------
 # AUTO-CLEAR OLD SPOTS
@@ -229,6 +344,69 @@ def clear_old_spots_task():
                 log_debug(f"Auto-cleared {len(spots_to_remove)} old spots")
             except Exception as e:
                 log_debug(f"Failed to auto-clear old spots: {e}")
+                if command_sock is not None:
+                    try:
+                        command_sock.close()
+                    except Exception:
+                        pass
+                    command_sock = None
+
+
+def update_spot_colors_task():
+    """Periodically recolor Flex spots based on configurable spot age buckets."""
+    command_sock = None
+    command_seq = 12000
+
+    while True:
+        time.sleep(10)
+
+        if not ENABLE_SPOT_TEXT_COLORS and not ENABLE_SPOT_BACKGROUND_COLORS:
+            continue
+
+        now = int(time.time())
+        updates = []
+        with flex_spots_lock:
+            for spot_id, spot in flex_spots.items():
+                spot_age_seconds = max(0, now - int(spot.get("time", now)))
+                target_text_color = spot_color_for_age(spot_age_seconds)
+                target_background_color = spot_background_color_for_age(spot_age_seconds)
+                if (
+                    spot.get("last_text_color") != target_text_color
+                    or spot.get("last_background_color") != target_background_color
+                    or spot.get("last_text_enabled") != ENABLE_SPOT_TEXT_COLORS
+                    or spot.get("last_background_enabled") != ENABLE_SPOT_BACKGROUND_COLORS
+                ):
+                    spot["last_text_color"] = target_text_color
+                    spot["last_background_color"] = target_background_color
+                    spot["last_text_enabled"] = ENABLE_SPOT_TEXT_COLORS
+                    spot["last_background_enabled"] = ENABLE_SPOT_BACKGROUND_COLORS
+                    updates.append((spot_id, target_text_color, target_background_color))
+
+        for spot_id, target_text_color, target_background_color in updates:
+            try:
+                if command_sock is None:
+                    command_sock = connect_flex_command_socket()
+
+                command_seq += 1
+                set_parts = []
+                if ENABLE_SPOT_TEXT_COLORS:
+                    set_parts.append(f"color={target_text_color}")
+                if ENABLE_SPOT_BACKGROUND_COLORS:
+                    if str(target_background_color).lower() == "none":
+                        set_parts.append("background_color=")
+                    else:
+                        set_parts.append(f"background_color={target_background_color}")
+
+                if not set_parts:
+                    continue
+
+                set_clause = " ".join(set_parts)
+                command_sock.sendall(
+                    f"C{command_seq}|spot set {spot_id} {set_clause}\n".encode()
+                )
+                log_debug(f"Updated spot id={spot_id} {set_clause}")
+            except Exception as e:
+                log_debug(f"Failed to update color for spot id={spot_id}: {e}")
                 if command_sock is not None:
                     try:
                         command_sock.close()
@@ -377,6 +555,10 @@ def flex_listener():
                         "freq_hz": spot_freq_hz,
                         "call": call,
                         "time": spot_time,
+                        "last_text_color": None,
+                        "last_background_color": None,
+                        "last_text_enabled": None,
+                        "last_background_enabled": None,
                     }
 
                 if REMOVE_DUPLICATE_SPOTS:
@@ -472,6 +654,9 @@ class App:
         
         clear_old_spots_thread = threading.Thread(target=clear_old_spots_task, daemon=True)
         clear_old_spots_thread.start()
+
+        spot_color_thread = threading.Thread(target=update_spot_colors_task, daemon=True)
+        spot_color_thread.start()
 
     def _load_about_icon_image(self, size=72):
         """Load the app icon for use in the About dialog."""
@@ -639,7 +824,6 @@ class App:
     def open_settings(self):
         settings_win = tk.Toplevel(self.root)
         settings_win.title("Preferences")
-        settings_win.geometry("450x320")
 
         # Settings fields
         settings = [
@@ -673,6 +857,24 @@ class App:
         ).grid(row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 8))
         row += 1
 
+        duplicate_threshold_var = tk.IntVar(value=DUPLICATE_SPOT_THRESHOLD_HZ)
+        duplicate_threshold_frame = tk.Frame(settings_win, bg="SystemControlBackgroundColor")
+        duplicate_threshold_frame.grid(row=row, column=0, columnspan=2, sticky="w", padx=28, pady=(0, 8))
+        tk.Label(
+            duplicate_threshold_frame,
+            text="Duplicate threshold:",
+            bg="SystemControlBackgroundColor"
+        ).pack(side=tk.LEFT)
+        tk.Spinbox(
+            duplicate_threshold_frame,
+            from_=0,
+            to=1000,
+            width=5,
+            textvariable=duplicate_threshold_var
+        ).pack(side=tk.LEFT, padx=(6, 4))
+        tk.Label(duplicate_threshold_frame, text="Hz", bg="SystemControlBackgroundColor").pack(side=tk.LEFT)
+        row += 1
+
         auto_clear_spots_var = tk.BooleanVar(value=AUTO_CLEAR_SPOTS_ENABLED)
         tk.Checkbutton(
             settings_win,
@@ -704,24 +906,211 @@ class App:
         ).grid(row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(6, 8))
         row += 1
 
+        spot_age_frame = tk.LabelFrame(settings_win, text="Spot Age Colors", padx=10, pady=10)
+        spot_age_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=8, pady=(8, 6))
+        settings_win.grid_columnconfigure(1, weight=1)
+
+        now_color_var = tk.StringVar(value=SPOT_COLOR_NOW)
+        red_color_var = tk.StringVar(value=SPOT_COLOR_RED)
+        yellow_color_var = tk.StringVar(value=SPOT_COLOR_YELLOW)
+        now_bg_color_var = tk.StringVar(value=SPOT_BG_COLOR_NOW)
+        red_bg_color_var = tk.StringVar(value=SPOT_BG_COLOR_RED)
+        yellow_bg_color_var = tk.StringVar(value=SPOT_BG_COLOR_YELLOW)
+
+        red_age_var = tk.IntVar(value=SPOT_AGE_RED_MINUTES)
+        yellow_age_var = tk.IntVar(value=SPOT_AGE_YELLOW_MINUTES)
+
+        def refresh_swatch(swatch_canvas, rect_id, color_var):
+            color = color_var.get()
+            label_id = swatch_canvas._none_label_id
+            if str(color).lower() == "none":
+                swatch_canvas.itemconfigure(rect_id, fill="#2E2E2E", outline="#9A9A9A")
+                swatch_canvas.itemconfigure(label_id, text="NONE", fill="#FFFFFF")
+            else:
+                swatch_canvas.itemconfigure(rect_id, fill=color, outline=color)
+                swatch_canvas.itemconfigure(label_id, text="")
+
+        def choose_color(color_var, refresh_callback):
+            current_color = color_var.get()
+            initial_color = current_color if str(current_color).startswith("#") else "#000000"
+            result = colorchooser.askcolor(color=initial_color, parent=settings_win, title="Choose spot color")
+            if result and result[1]:
+                color_var.set(result[1])
+                refresh_callback()
+
+        def make_swatch(parent, color_var):
+            swatch = tk.Canvas(
+                parent,
+                width=110,
+                height=30,
+                highlightthickness=1,
+                highlightbackground="#B8B8B8",
+                bd=0,
+                cursor="hand2"
+            )
+            swatch_rect = swatch.create_rectangle(4, 6, 106, 24)
+            swatch._none_label_id = swatch.create_text(55, 15, text="", font=("Avenir Next", 10, "bold"))
+            refresh_fn = lambda: refresh_swatch(swatch, swatch_rect, color_var)
+            refresh_fn()
+            color_var.trace_add("write", lambda *_args: refresh_fn())
+            swatch.bind("<Button-1>", lambda _event: choose_color(color_var, refresh_fn))
+            return swatch
+
+        tk.Label(spot_age_frame, text="Now").grid(row=0, column=1, padx=(0, 12), pady=(0, 6), sticky="w")
+        tk.Label(spot_age_frame, text="Red").grid(row=0, column=2, padx=(0, 12), pady=(0, 6), sticky="w")
+        tk.Label(spot_age_frame, text="Yellow").grid(row=0, column=3, padx=(0, 12), pady=(0, 6), sticky="w")
+
+        tk.Label(spot_age_frame, text="Text").grid(row=1, column=0, padx=(0, 12), pady=(0, 6), sticky="w")
+        make_swatch(spot_age_frame, now_color_var).grid(row=1, column=1, padx=(0, 12), pady=(0, 6), sticky="w")
+        make_swatch(spot_age_frame, red_color_var).grid(row=1, column=2, padx=(0, 12), pady=(0, 6), sticky="w")
+        make_swatch(spot_age_frame, yellow_color_var).grid(row=1, column=3, padx=(0, 12), pady=(0, 6), sticky="w")
+
+        tk.Label(spot_age_frame, text="Background").grid(row=2, column=0, padx=(0, 12), pady=(0, 6), sticky="w")
+        make_swatch(spot_age_frame, now_bg_color_var).grid(row=2, column=1, padx=(0, 12), pady=(0, 6), sticky="w")
+        make_swatch(spot_age_frame, red_bg_color_var).grid(row=2, column=2, padx=(0, 12), pady=(0, 6), sticky="w")
+        make_swatch(spot_age_frame, yellow_bg_color_var).grid(row=2, column=3, padx=(0, 12), pady=(0, 6), sticky="w")
+
+        tk.Button(spot_age_frame, text="None", command=lambda: now_bg_color_var.set("none"), padx=8).grid(
+            row=3, column=1, padx=(0, 12), pady=(0, 6), sticky="w"
+        )
+        tk.Button(spot_age_frame, text="None", command=lambda: red_bg_color_var.set("none"), padx=8).grid(
+            row=3, column=2, padx=(0, 12), pady=(0, 6), sticky="w"
+        )
+        tk.Button(spot_age_frame, text="None", command=lambda: yellow_bg_color_var.set("none"), padx=8).grid(
+            row=3, column=3, padx=(0, 12), pady=(0, 6), sticky="w"
+        )
+
+        tk.Label(spot_age_frame, text="Age").grid(row=4, column=0, padx=(0, 12), pady=(2, 0), sticky="w")
+        tk.Label(spot_age_frame, text="Fixed at 0 min").grid(row=4, column=1, padx=(0, 12), pady=(2, 0), sticky="w")
+        red_age_spin = tk.Spinbox(spot_age_frame, from_=1, to=240, width=4, textvariable=red_age_var)
+        red_age_spin.grid(row=4, column=2, padx=(0, 12), pady=(2, 0), sticky="w")
+        yellow_age_spin = tk.Spinbox(spot_age_frame, from_=2, to=240, width=4, textvariable=yellow_age_var)
+        yellow_age_spin.grid(row=4, column=3, padx=(0, 12), pady=(2, 0), sticky="w")
+        tk.Label(spot_age_frame, text="minutes").grid(row=4, column=4, sticky="w", pady=(2, 0))
+
+        def set_age_defaults():
+            red_age_var.set(5)
+            yellow_age_var.set(15)
+            now_color_var.set(DEFAULT_SPOT_COLOR_NOW)
+            red_color_var.set(DEFAULT_SPOT_COLOR_RED)
+            yellow_color_var.set(DEFAULT_SPOT_COLOR_YELLOW)
+            now_bg_color_var.set(DEFAULT_SPOT_BG_COLOR_NOW)
+            red_bg_color_var.set(DEFAULT_SPOT_BG_COLOR_RED)
+            yellow_bg_color_var.set(DEFAULT_SPOT_BG_COLOR_YELLOW)
+
+        tk.Button(spot_age_frame, text="Default", command=set_age_defaults).grid(
+            row=5, column=0, columnspan=5, pady=(10, 0)
+        )
+
+        enable_text_colors_var = tk.BooleanVar(value=ENABLE_SPOT_TEXT_COLORS)
+        tk.Checkbutton(
+            spot_age_frame,
+            text="Update spot text color",
+            variable=enable_text_colors_var
+        ).grid(row=6, column=0, columnspan=5, sticky="w", pady=(8, 0))
+
+        enable_background_colors_var = tk.BooleanVar(value=ENABLE_SPOT_BACKGROUND_COLORS)
+        tk.Checkbutton(
+            spot_age_frame,
+            text="Update spot background color",
+            variable=enable_background_colors_var
+        ).grid(row=7, column=0, columnspan=5, sticky="w", pady=(2, 0))
+
+        mode_preview_var = tk.StringVar()
+
+        def update_mode_preview(*_args):
+            text_enabled = enable_text_colors_var.get()
+            background_enabled = enable_background_colors_var.get()
+
+            if text_enabled and background_enabled:
+                mode_preview_var.set("Active mode: text + background")
+            elif text_enabled:
+                mode_preview_var.set("Active mode: text only")
+            elif background_enabled:
+                mode_preview_var.set("Active mode: background only")
+            else:
+                mode_preview_var.set("Active mode: disabled")
+
+        enable_text_colors_var.trace_add("write", update_mode_preview)
+        enable_background_colors_var.trace_add("write", update_mode_preview)
+        update_mode_preview()
+
+        tk.Label(
+            spot_age_frame,
+            textvariable=mode_preview_var,
+            fg="#FFFFFF"
+        ).grid(row=8, column=0, columnspan=5, sticky="w", pady=(8, 0))
+
+        row += 1
+
         def save():
-            global KEEP_CURRENT_MODE, REMOVE_DUPLICATE_SPOTS, VERBOSE_LOGGING, AUTO_CLEAR_SPOTS_ENABLED, AUTO_CLEAR_SPOTS_AGE_MINUTES
+            global KEEP_CURRENT_MODE, REMOVE_DUPLICATE_SPOTS, DUPLICATE_SPOT_THRESHOLD_HZ, VERBOSE_LOGGING, AUTO_CLEAR_SPOTS_ENABLED, AUTO_CLEAR_SPOTS_AGE_MINUTES
+            global SPOT_AGE_RED_MINUTES, SPOT_AGE_YELLOW_MINUTES, SPOT_COLOR_NOW, SPOT_COLOR_RED, SPOT_COLOR_YELLOW
+            global SPOT_BG_COLOR_NOW, SPOT_BG_COLOR_RED, SPOT_BG_COLOR_YELLOW
+            global ENABLE_SPOT_TEXT_COLORS, ENABLE_SPOT_BACKGROUND_COLORS
             for var_name, entry in entries.items():
                 value = entry.get()
                 if var_name in ["FLEX_PORT"]:
                     globals()[var_name] = int(value)
                 else:
                     globals()[var_name] = value
+
+            try:
+                red_minutes = int(red_age_var.get())
+                yellow_minutes = int(yellow_age_var.get())
+                duplicate_threshold_hz = int(duplicate_threshold_var.get())
+            except ValueError:
+                print("Spot age and duplicate threshold settings must be whole numbers")
+                return
+
+            if red_minutes < 1:
+                print("Red spot age must be at least 1 minute")
+                return
+
+            if yellow_minutes <= red_minutes:
+                print("Yellow spot age must be greater than red spot age")
+                return
+
+            if duplicate_threshold_hz < 0:
+                print("Duplicate threshold must be 0 Hz or greater")
+                return
+
             KEEP_CURRENT_MODE = keep_current_mode_var.get()
             REMOVE_DUPLICATE_SPOTS = remove_duplicate_spots_var.get()
+            DUPLICATE_SPOT_THRESHOLD_HZ = duplicate_threshold_hz
             AUTO_CLEAR_SPOTS_ENABLED = auto_clear_spots_var.get()
             AUTO_CLEAR_SPOTS_AGE_MINUTES = auto_clear_age_var.get()
             VERBOSE_LOGGING = verbose_logging_var.get()
+            SPOT_AGE_RED_MINUTES = red_minutes
+            SPOT_AGE_YELLOW_MINUTES = yellow_minutes
+            SPOT_COLOR_NOW = now_color_var.get()
+            SPOT_COLOR_RED = red_color_var.get()
+            SPOT_COLOR_YELLOW = yellow_color_var.get()
+            SPOT_BG_COLOR_NOW = now_bg_color_var.get()
+            SPOT_BG_COLOR_RED = red_bg_color_var.get()
+            SPOT_BG_COLOR_YELLOW = yellow_bg_color_var.get()
+            ENABLE_SPOT_TEXT_COLORS = enable_text_colors_var.get()
+            ENABLE_SPOT_BACKGROUND_COLORS = enable_background_colors_var.get()
+
+            # Force all tracked spots to be recolored against the new settings.
+            with flex_spots_lock:
+                for spot in flex_spots.values():
+                    spot["last_text_color"] = None
+                    spot["last_background_color"] = None
+                    spot["last_text_enabled"] = None
+                    spot["last_background_enabled"] = None
+
             save_settings()
             settings_win.destroy()
             print("Settings saved")
 
         tk.Button(settings_win, text="OK", command=save).grid(row=row, column=0, columnspan=3, pady=(8, 0))
+
+        settings_win.update_idletasks()
+        requested_width = settings_win.winfo_reqwidth() + 16
+        requested_height = settings_win.winfo_reqheight() + 16
+        settings_win.geometry(f"{requested_width}x{requested_height}")
+        settings_win.minsize(requested_width, requested_height)
 
         def save_from_keyboard(_event=None):
             save()
